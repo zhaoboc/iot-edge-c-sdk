@@ -35,7 +35,7 @@
 #define     TOPIC_SUFFIX_UPDATE_REJECTED    "update/rejected"
 #define     TOPIC_SUFFIX_UPDATE_DOCUMENTS   "update/documents"
 #define     TOPIC_SUFFIX_UPDATE_SNAPSHOT    "update/snapshot"
-#define     TOPIC_SUFFIX_METHOD_CLOUD_REQ   "method/cloud/req"
+#define     TOPIC_SUFFIX_METHOD_DEVICE_REQ  "method/device/req"
 #define     TOPIC_SUFFIX_METHOD_CLOUD_RESP  "method/cloud/resp"
 
 #define     PUB_GET                         "$baidu/iot/shadow/%s/get"
@@ -77,6 +77,8 @@
 #define     ENDPOINT                        "baidu-smarthome.mqtt.iot.gz.baidubce.com"
 
 #define     METHOD_GET_FIRMWARE             "getFirmware"
+#define     METHOD_DO_FIRMWARE_UPDATE       "doFirmwareUpdate"
+#define     METHOD_REPORT_FIRMWARE_UPDATE_START     "reportFirmwareUpdateStart"
 #define     METHOD_REPORT_FIRMWARE_UPDATE_RESULT    "reportFirmwareUpdateResult"
 
 typedef struct SHADOW_CALLBACK_TAG
@@ -89,6 +91,7 @@ typedef struct SHADOW_CALLBACK_TAG
     SHADOW_DOCUMENTS_CALLBACK updateDocuments;
     SHADOW_SNAPSHOT_CALLBACK updateSnapshot;
     SHADOW_OTA_JOB_CALLBACK otaJob;
+    SHADOW_OTA_REPORT_RESULT_CALLBACK otaReportStart;
     SHADOW_OTA_REPORT_RESULT_CALLBACK otaReportResult;
 } SHADOW_CALLBACK;
 
@@ -102,6 +105,7 @@ typedef struct SHADOW_CALLBACK_CONTEXT_TAG
     void* updateDocuments;
     void* updateSnapshot;
     void* otaJob;
+    void* otaReportStart;
     void* otaReportResult;
 } SHADOW_CALLBACK_CONTEXT;
 
@@ -230,6 +234,10 @@ static int GetDeviceFromTopic(const char* topic, IOT_SH_CLIENT_HANDLE handle, SH
     else if (StringCmp(TOPIC_SUFFIX_UPDATE_SNAPSHOT, topic, tmp = topicLength - strlen(TOPIC_SUFFIX_UPDATE_SNAPSHOT), topicLength + 1))
     {
         *type = SHADOW_CALLBACK_TYPE_UPDATE_SNAPSHOT;
+        end = tmp - 1;
+    }
+    else if (StringCmp(TOPIC_SUFFIX_METHOD_DEVICE_REQ, topic, tmp = topicLength - strlen(TOPIC_SUFFIX_METHOD_DEVICE_REQ), topicLength + 1)) {
+        *type = SHADOW_CALLBACK_TYPE_METHOD_REQ;
         end = tmp - 1;
     }
     else if (StringCmp(TOPIC_SUFFIX_METHOD_CLOUD_RESP, topic, tmp = topicLength - strlen(TOPIC_SUFFIX_METHOD_CLOUD_RESP), topicLength + 1)) {
@@ -377,7 +385,7 @@ static int GetSubscription(IOT_SH_CLIENT_HANDLE handle, char** subscribe, size_t
             return -1;
         }
     }
-    if (NULL != handle->callback.otaJob || NULL != handle->callback.otaReportResult) {
+    if (NULL != handle->callback.otaJob) {
         subscribe[index] = GenerateTopic(SUB_METHOD_RESP, subObject);
         if (NULL == subscribe[index++]) {
             LogError("Failure: failed to generate the sub topic 'method/cloud/resp'.");
@@ -438,6 +446,47 @@ static void OnRecvCallbackForSnapshot(const IOT_SH_CLIENT_HANDLE handle, const S
     (*(handle->callback.updateSnapshot))(msgContext, &shadow_snapshot, handle->context.updateSnapshot);
 }
 
+static void OnRecvCallbackForMethodReq(const IOT_SH_CLIENT_HANDLE handle, const char *topic,
+                                        const SHADOW_MESSAGE_CONTEXT *msgContext, const JSON_Object *root,
+                                        const APP_PAYLOAD* payload)
+{
+    char *message = malloc(payload->length + 1);
+    if (message != NULL) {
+        strncpy(message, payload->message, payload->length);
+        message[payload->length] = '\0';
+        LOG(AZ_LOG_TRACE, LOG_LINE, "Received Method request:\n%s\n%s", topic, message);
+        free(message);
+    }
+    else
+    {
+        LOG(AZ_LOG_TRACE, LOG_LINE, "Received Method request:\n%s", topic);
+    }
+    const char* methodName = json_object_get_string(root, KEY_METHOD_NAME);
+
+    if (NULL == methodName) {
+        LogError("Failure: methodName should not be NULL");
+    } else {
+        double status = json_object_get_number(root, KEY_STATUS);
+        JSON_Object* payload = json_object_get_object(root, KEY_PAYLOAD);
+        if (strcmp(methodName, METHOD_DO_FIRMWARE_UPDATE) == 0)
+        {
+            // Handle response for get firmware
+            if (NULL != handle->callback.otaJob)
+            {
+                SHADOW_OTA_JOB_INFO otaJobInfo;
+                otaJobInfo.jobId = json_object_get_string(payload, KEY_JOB_ID);
+                otaJobInfo.firmwareUrl = json_object_get_string(payload, KEY_FIRMWARE_URL);
+                otaJobInfo.firmwareVersion = json_object_get_string(payload, KEY_FIRMWARE_VERSION);
+                (*(handle->callback.otaJob))(msgContext, &otaJobInfo, handle->context.otaJob);
+            }
+        }
+        else
+        {
+            LogError("Failure: cannot handle unknown method %s.", methodName);
+        }
+    }
+}
+
 static void OnRecvCallbackForMethodResp(const IOT_SH_CLIENT_HANDLE handle, const char *topic,
                                         const SHADOW_MESSAGE_CONTEXT *msgContext, const JSON_Object *root,
                                         const APP_PAYLOAD* payload)
@@ -476,6 +525,20 @@ static void OnRecvCallbackForMethodResp(const IOT_SH_CLIENT_HANDLE handle, const
                     otaJobInfo.firmwareUrl = json_object_get_string(payload, KEY_FIRMWARE_URL);
                     otaJobInfo.firmwareVersion = json_object_get_string(payload, KEY_FIRMWARE_VERSION);
                     (*(handle->callback.otaJob))(msgContext, &otaJobInfo, handle->context.otaJob);
+                }
+            }
+            else
+            {
+                LogError("Unexpected response. %d", status);
+            }
+        }
+        else if (strcmp(methodName, METHOD_REPORT_FIRMWARE_UPDATE_START) == 0)
+        {
+            if (status >= 200 && status < 300)
+            {
+                if (NULL != handle->callback.otaReportStart)
+                {
+                    (*(handle->callback.otaReportStart))(msgContext, handle->context.otaReportStart);
                 }
             }
             else
@@ -581,6 +644,9 @@ static void OnRecvCallback(MQTT_MESSAGE_HANDLE msgHandle, void* context)
             case SHADOW_CALLBACK_TYPE_UPDATE_SNAPSHOT:
                 OnRecvCallbackForSnapshot(handle, &msgContext, root);
                 break;
+
+            case SHADOW_CALLBACK_TYPE_METHOD_REQ:
+                OnRecvCallbackForMethodReq(handle, topic, &msgContext, root, payload);
 
             case SHADOW_CALLBACK_TYPE_METHOD_RESP:
                 OnRecvCallbackForMethodResp(handle, topic, &msgContext, root, payload);
@@ -1016,6 +1082,12 @@ void iot_smarthome_client_ota_register_job(const IOT_SH_CLIENT_HANDLE handle, SH
     handle->context.otaJob = callbackContext;
 }
 
+void iot_smarthome_client_ota_register_report_start(const IOT_SH_CLIENT_HANDLE handle, SHADOW_OTA_REPORT_RESULT_CALLBACK callback, void* callbackContext)
+{
+    handle->callback.otaReportStart = callback;
+    handle->context.otaReportStart = callbackContext;
+}
+
 void iot_smarthome_client_ota_register_report_result(const IOT_SH_CLIENT_HANDLE handle, SHADOW_OTA_REPORT_RESULT_CALLBACK callback, void* callbackContext)
 {
     handle->callback.otaReportResult = callback;
@@ -1053,6 +1125,17 @@ int iot_smarthome_client_ota_get_job(const IOT_SH_CLIENT_HANDLE handle, const ch
     return iot_smarthome_client_method_req(handle, device, METHOD_GET_FIRMWARE, request, requestId);
 }
 
+int iot_smarthome_client_ota_report_start(const IOT_SH_CLIENT_HANDLE handle, const char* device, const char* jobId, const char* requestId)
+{
+    if (NULL == jobId) {
+        LogError("Failure: jobId should not be NULL");
+    }
+    JSON_Value* request = json_value_init_object();
+    JSON_Object* root = json_object(request);
+    json_object_set_string(root, KEY_JOB_ID, jobId);
+    return iot_smarthome_client_method_req(handle, device, METHOD_REPORT_FIRMWARE_UPDATE_START, request, requestId);
+}
+
 int iot_smarthome_client_ota_report_result(const IOT_SH_CLIENT_HANDLE handle, const char* device, const char* jobId, bool isSuccess, const char* requestId)
 {
     if (NULL == jobId) {
@@ -1074,6 +1157,15 @@ int iot_smarthome_client_ota_get_subdevice_job(const IOT_SH_CLIENT_HANDLE handle
     free(pubObject);
     return result;
 }
+
+int iot_smarthome_client_ota_report_subdevice_start(const IOT_SH_CLIENT_HANDLE handle, const char* gateway, const char* subdevice, const char* jobId, const char* requestId)
+{
+    char* pubObject = GenerateGatewaySubdevicePubObject(gateway, subdevice);
+    int result = iot_smarthome_client_ota_report_start(handle, pubObject, jobId, requestId);
+    free(pubObject);
+    return result;
+}
+
 int iot_smarthome_client_ota_report_subdevice_result(const IOT_SH_CLIENT_HANDLE handle, const char* gateway, const char* subdevice, const char* jobId, bool isSuccess, const char* requestId)
 {
     char* pubObject = GenerateGatewaySubdevicePubObject(gateway, subdevice);
