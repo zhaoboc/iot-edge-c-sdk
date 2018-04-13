@@ -647,6 +647,7 @@ static void OnRecvCallback(MQTT_MESSAGE_HANDLE msgHandle, void* context)
 
             case SHADOW_CALLBACK_TYPE_METHOD_REQ:
                 OnRecvCallbackForMethodReq(handle, topic, &msgContext, root, payload);
+                break;
 
             case SHADOW_CALLBACK_TYPE_METHOD_RESP:
                 OnRecvCallbackForMethodResp(handle, topic, &msgContext, root, payload);
