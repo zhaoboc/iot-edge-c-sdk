@@ -19,6 +19,8 @@
 
 #include <azure_c_shared_utility/platform.h>
 #include <azure_c_shared_utility/threadapi.h>
+#include <azure_c_shared_utility/buffer_.h>
+#include <bos.h>
 
 #include "iotdm_callback.h"
 #include "iotdm_client.h"
@@ -34,17 +36,21 @@
 // The endpoint address your device should cnnect, which is like
 // 1. "tcp://xxxxxx.mqtt.iot.xx.baidubce.com:1883" or
 // 2. "ssl://xxxxxx.mqtt.iot.xx.baidubce.com:1884"
-#define         ADDRESS             "tcp://xxxxxx.mqtt.iot.xx.baidubce.com:1883"
+//#define         ADDRESS             "tcp://nmg01-hpc-w1134.nmg01.baidu.com:8883"
+#define         ADDRESS             "tcp://xxxxxx.mqtt.iot.bj.baidubce.com:1883"
 
 // The device name you created in device management service.
-#define         DEVICE              "xxxxxx"
+#define         DEVICE              "zhaobo03_devtest"
 
 // The username you can find on the device connection configuration web,
 // and the format is like "xxxxxx/xxxxx"
-#define         USERNAME            "xxxxxx/xxxxxx"
+//#define         USERNAME            "0be3daac18054b78b0dc9e267f67e3cf/zhaobo03_devtest" // sandbox
 
 // The key (password) you can find on the device connection configuration web.
-#define         PASSWORD            "xxxxxx"
+//#define         PASSWORD            "hp5VKGK1OuWAeD5YZIaBTHRy4YKwSZg86Suu7bOUPss=" // sandbox
+
+#define         USERNAME            "b14edd8ab7d54a05887fb596167c3fa3/zhaobo03_devtest"
+#define         PASSWORD            "q90xW3oXEzNnqdIrArwn3TppSbqK/bwAU6KpFVQGa4o="
 
 BEGIN_NAMESPACE(BaiduIotDeviceSample);
 
@@ -91,11 +97,13 @@ static void LogAcceptedMessage(const SHADOW_ACCEPTED* accepted)
     char* encoded = json_serialize_to_string(value);
     Log("Reported:");
     Log(encoded);
+    json_free_serialized_string(encoded);
 
     value = json_object_get_wrapping_value(accepted->desired);
     encoded = json_serialize_to_string(value);
     Log("Desired:");
     Log(encoded);
+    json_free_serialized_string(encoded);
 
     value = json_object_get_wrapping_value(accepted->lastUpdateTime);
     encoded = json_serialize_to_string(value);
@@ -183,6 +191,7 @@ static void HandleUpdateDocuments(const SHADOW_MESSAGE_CONTEXT* messageContext, 
     char* encoded = json_serialize_to_string(value);
     Log("Current:");
     Log(encoded);
+    json_free_serialized_string(encoded);
 
     value = json_object_get_wrapping_value(documents->previous);
     encoded = json_serialize_to_string(value);
@@ -213,6 +222,7 @@ static void HandleUpdateSnapshot(const SHADOW_MESSAGE_CONTEXT* messageContext, c
     char* encoded = json_serialize_to_string(value);
     Log("Reported:");
     Log(encoded);
+    json_free_serialized_string(encoded);
 
     value = json_object_get_wrapping_value(snapshot->lastUpdateTime);
     encoded = json_serialize_to_string(value);
@@ -282,6 +292,12 @@ static void HandleDelta(const SHADOW_MESSAGE_CONTEXT* messageContext, const JSON
     Log(SPLIT);
 }
 
+static char firmwareVersion[64];
+
+static void HandleOtaJob(const SHADOW_MESSAGE_CONTEXT* messageContext, const SHADOW_OTA_JOB_INFO* otaJobInfo, void* callbackContext);
+
+static void HandleOtaReportResult(const SHADOW_MESSAGE_CONTEXT* messageContext, void* callbackContext);
+
 int iotdm_client_run(void)
 {
     Log("The device management edge simulator is starting ...");
@@ -314,6 +330,9 @@ int iotdm_client_run(void)
     iotdm_client_register_delete_accepted(handle, HandleDeleteAccepted, handle);
     iotdm_client_register_delete_rejected(handle, HandleDeleteRejected, handle);
 
+    iotdm_client_ota_register_job(handle, HandleOtaJob, handle);
+    iotdm_client_ota_register_report_result(handle, HandleOtaReportResult, handle);
+
     IOTDM_CLIENT_OPTIONS options;
     options.cleanSession = true;
     options.clientId = DEVICE;
@@ -321,6 +340,7 @@ int iotdm_client_run(void)
     options.password = PASSWORD;
     options.keepAliveInterval = 5;
     options.retryTimeoutInSeconds = 300;
+    options.enableOta = true;
 
     if (0 != iotdm_client_connect(handle, &options))
     {
@@ -331,6 +351,8 @@ int iotdm_client_run(void)
 
     // Subscribe the topics.
     iotdm_client_dowork(handle);
+    strncpy(firmwareVersion, "0.1.0", 64);
+    iotdm_client_ota_get_job(handle, firmwareVersion, "1234");
 
     // Sample: get device shadow
     if (0 == iotdm_client_get_shadow(handle, DEVICE, "123456789"))
@@ -419,5 +441,31 @@ int iotdm_client_run(void)
 #ifdef _CRT_DBG_MAP_ALLOC
     _CrtDumpMemoryLeaks();
 #endif
+}
+
+static void HandleOtaJob(const SHADOW_MESSAGE_CONTEXT* messageContext, const SHADOW_OTA_JOB_INFO* otaJobInfo, void* callbackContext)
+{
+    LogInfo("Received an OTA job for %s", messageContext->device);
+    // Pull OTA file
+    unsigned int status;
+    BUFFER_HANDLE firmwareBuffer = BUFFER_new();
+    BOS_RESULT result = BOS_Download_Presigned(otaJobInfo->firmwareUrl, NULL, NULL, &status, firmwareBuffer);
+    if (result != BOS_OK)
+    {
+        LogError("Failed to download from BOS");
+    }
+    // Flash the firmware
+    BUFFER_delete(firmwareBuffer);
+    IOTDM_CLIENT_HANDLE handle = (IOTDM_CLIENT_HANDLE)callbackContext;
+    // Report result
+
+    iotdm_client_ota_report_start(handle, otaJobInfo->jobId, "2345");
+    strncpy(firmwareVersion, otaJobInfo->firmwareVersion, 64);
+    iotdm_client_ota_report_result(handle, otaJobInfo->jobId, otaJobInfo->firmwareVersion, "2345");
+}
+
+static void HandleOtaReportResult(const SHADOW_MESSAGE_CONTEXT* messageContext, void* callbackContext)
+{
+    Log("OTA result reported");
 }
 
