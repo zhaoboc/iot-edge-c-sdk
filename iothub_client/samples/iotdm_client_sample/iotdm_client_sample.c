@@ -97,11 +97,13 @@ static void LogAcceptedMessage(const SHADOW_ACCEPTED* accepted)
     char* encoded = json_serialize_to_string(value);
     Log("Reported:");
     Log(encoded);
+    json_free_serialized_string(encoded);
 
     value = json_object_get_wrapping_value(accepted->desired);
     encoded = json_serialize_to_string(value);
     Log("Desired:");
     Log(encoded);
+    json_free_serialized_string(encoded);
 
     value = json_object_get_wrapping_value(accepted->lastUpdateTime);
     encoded = json_serialize_to_string(value);
@@ -189,6 +191,7 @@ static void HandleUpdateDocuments(const SHADOW_MESSAGE_CONTEXT* messageContext, 
     char* encoded = json_serialize_to_string(value);
     Log("Current:");
     Log(encoded);
+    json_free_serialized_string(encoded);
 
     value = json_object_get_wrapping_value(documents->previous);
     encoded = json_serialize_to_string(value);
@@ -219,6 +222,7 @@ static void HandleUpdateSnapshot(const SHADOW_MESSAGE_CONTEXT* messageContext, c
     char* encoded = json_serialize_to_string(value);
     Log("Reported:");
     Log(encoded);
+    json_free_serialized_string(encoded);
 
     value = json_object_get_wrapping_value(snapshot->lastUpdateTime);
     encoded = json_serialize_to_string(value);

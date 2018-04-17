@@ -55,7 +55,7 @@
 #define     SUB_UPDATE_SNAPSHOT             "$baidu/iot/shadow/%s/update/snapshot"
 #define     SUB_DELETE_ACCEPTED             "$baidu/iot/shadow/%s/delete/accepted"
 #define     SUB_DELETE_REJECTED             "$baidu/iot/shadow/%s/delete/rejected"
-#define     SUB_METHOD_RESP                 "$baidu/iot/shadow/%s/method/cloud/resp/+"
+#define     SUB_METHOD_RESP                 "$baidu/iot/shadow/%s/method/cloud/resp"
 #define     SUB_METHOD_REQ                  "$baidu/iot/shadow/%s/method/device/req"
 
 #define     KEY_CODE                        "code"
@@ -769,6 +769,9 @@ static void ResetIotDmClient(IOTDM_CLIENT_HANDLE handle)
         handle->callback.updateSnapshot = NULL;
         handle->callback.deleteAccepted = NULL;
         handle->callback.deleteRejected = NULL;
+        handle->callback.otaJob = NULL;
+        handle->callback.otaReportStart = NULL;
+        handle->callback.otaReportResult = NULL;
 
         handle->context.delta = NULL;
         handle->context.getAccepted = NULL;
@@ -779,6 +782,9 @@ static void ResetIotDmClient(IOTDM_CLIENT_HANDLE handle)
         handle->context.updateDocuments = NULL;
         handle->context.deleteAccepted = NULL;
         handle->context.deleteRejected = NULL;
+        handle->context.otaJob = NULL;
+        handle->context.otaReportStart = NULL;
+        handle->context.otaReportResult = NULL;
     }
 }
 
